@@ -23,18 +23,6 @@ if (!exists("land_cover")) {
 # Merge into buffer
 # Return
 
-refresh_api_key <- function() {
-  cat(file=stderr(), "Checking API key...")
-  readRenviron("~/.Renviron")
-  if (Sys.getenv("CENSUS_API_KEY") == "") {
-    cat(file=stderr(), "Installing Census API key...")
-    census_api_key('b8729f53635259a41d49d826db949d917650c8ba', install=T)
-    cat(file=stderr(), "Installed Census API key")
-  } else {
-    cat(file=stderr(), "Census API key already installed")
-  }
-}
-refresh_api_key()
 options(tigris_use_cache = TRUE)
 
 meters_per_degree <- 111111.1 
@@ -177,8 +165,29 @@ if (0) {
   
   }
 
-# TODO -- Make this smart, on-demand caching
-get_statecounty_tracts <- function(state, county) {
+# TODO -- test on-demand caching
+state_list <- list()
+get_statecounty_tracts <- function(state, county, year=2017) {
+  print("called get_statecounty_tracts")
+  if (as.numeric(state) < 0 || as.numeric(state) > 55) { message(sprintf("error!  Unknown state %s", state)) }
+  if (as.numeric(county) < 0 || as.numeric(county) > 1000) { message(sprintf("error!  Unknown county %s", county)) }
+  state_counties <- state_list[[state]]
+  if (is.null(state_counties)) {
+    state_counties <- list()
+  }
+  tracts_without_water <- state_counties[[county]]
+  if (is.null(tracts_without_water)) {
+    print(sprintf("Looking up tracts for state %s , county %s", state, county))
+    tracts <- st_as_sf(tracts(state = state, county = county, year=2017))
+    water <- st_union(st_as_sf(area_water(state = state, county = county)))
+    tracts_without_water <- st_difference(tracts, water)
+    state_counties[[county]] <- tracts_without_water
+  }
+  state_list[[state]] <- state_counties
+  return(tracts_without_water)
+}
+  
+old_statecounty_tracts <- function(state, county) {
   if (state != "53") { message("error! Not implemented outside WA State yet")}
   if (county == "033") { return (kc_tracts_without_water) }
   else if (county == "061") { return (sno_tracts_without_water) }
@@ -235,6 +244,33 @@ get_count_variable_for_lat_long <- function(long, lat, radius_meters, acs_var_na
   result <- lapply(acs_var_names, function(x) { suppressWarnings(st_interpolate_aw(population[,x], point_buffer, extensive=T)[[2]])})
   return(data.frame(name=acs_var_names, estimate=unlist(result)))  
 }
+
+get_acs_standard_columns <- function(year=2017) {
+  # To do: cache this
+  if (year < 2011) {
+    print("Using 2010 ACS columns")
+    acs_columns <- read.csv("ACMT/2010ACSColumns.csv")
+  } else {
+    print("Using Post-2010 ACS columns")
+    acs_columns <- read.csv("ACMT/ACSColumns.csv")
+  }
+  acs_varnames <- acs_columns$acs_col
+  names(acs_varnames) <- acs_columns$var_name
+  acs_proportion_names <- paste(acs_columns$var_name[acs_columns$universe_col != ""], "proportion", sep="_")
+  acs_count_names <- paste(acs_columns$var_name, "count", sep="_")
+  acs_proportion_pretty_names <- acs_columns$pretty_name_proportion[acs_columns$universe_col != ""]
+  acs_count_pretty_names <- acs_columns$pretty_name_count
+  all_var_cols <- c(as.character(acs_columns$acs_col), as.character(acs_columns$universe_col))
+  unique_var_cols <- unique(all_var_cols)
+  unique_var_cols <- unique_var_cols[unique_var_cols != ""]
+  return(list(acs_proportion_names=acs_proportion_names, 
+              acs_count_names=acs_count_names, 
+              acs_unique_var_cols=unique_var_cols, 
+              acs_columns=acs_columns, 
+              acs_proportion_pretty_name_map=data.frame(acs_proportion_names, acs_proportion_pretty_names), 
+              acs_count_pretty_name_map=data.frame(acs_count_names, acs_count_pretty_names)))
+}
+
 
 
 # TODO: not handling margin of error correctly at all
