@@ -36,7 +36,11 @@ counties <- st_transform(counties, 4326)
 
 state_plane_zones <- sf::st_read(dsn = "ACMT", layer = "USA_State_Plane_Zones_NAD83")
 
-epa_walkability <- sf::st_read(dsn = "Natl_WI.gdb", layer="NationalWalkabilityIndex")
+epa_walkability <- sf::st_read(dsn = "ACMT\\Natl_WI.gdb\\Natl_WI.gdb", layer="NationalWalkabilityIndex")
+
+mrfei <- read.csv("ACMT\\2_16_mrfei_data_table.csv")
+mrfei$fips <- as.character(mrfei$fips)
+
 
 get_state_from_fips <- function(fips_code) {
   if (is.null(fips_code)) {
@@ -83,7 +87,7 @@ state_proj$standard_zone[state_proj$zone == "south central"] <- "SC"
 state_proj$standard_zone[state_proj$zone == "east central"] <- "EC"
 state_proj$standard_zone[state_proj$zone == "west central"] <- "WC"
 state_proj$ZONE <- paste(state_proj$state, state_proj$standard_zone, sep="_")
-state_proj$ZONE[is.na(state_proj$zone)] <- state_proj$state
+state_proj$ZONE[is.na(state_proj$zone)] <- state_proj$state[is.na(state_proj$zone)]
 state_proj$ZONE
 
 get_projection_for_lat_long <- function(long, lat) {
@@ -139,33 +143,6 @@ show_map_for_lat_long <- function(long, lat, radius_meters, projection=NULL) {
   return(tm)
 }
 
-# HACKHACK 5/6/19 -- do water merge as a one-off for king county
-
-if (0) {
-  #  kc_water <- st_union(st_as_sf(area_water(state = "53", county = "033")))
-  #  acs_results <- get_acs("tract",  variables="B01001_001", state="53", 
-  #                      county="033", cache_table = T, geometry = T, keep_geo_vars = T, year=2016)
-  #  kc_water_transformed <- st_transform(kc_water, st_crs(acs_results))
-  
-  tracts <- st_as_sf(tracts(state = "53", county = "033", year=2017))
-  water <- st_union(st_as_sf(area_water(state = "53", county = "033")))
-  kc_tracts_without_water <- st_difference(tracts, water)
-  
-  tracts <- st_as_sf(tracts(state = "53", county = "061", year=2017))
-  water <- st_union(st_as_sf(area_water(state = "53", county = "061")))
-  sno_tracts_without_water <- st_difference(tracts, water)
-  
-  tracts <- st_as_sf(tracts(state = "53", county = "053", year=2017))
-  water <- st_union(st_as_sf(area_water(state = "53", county = "053")))
-  pierce_tracts_without_water <- st_difference(tracts, water)
-  
-  tracts <- st_as_sf(tracts(state = "53", county = "057", year=2017))
-  water <- st_union(st_as_sf(area_water(state = "53", county = "057")))
-  skagit_tracts_without_water <- st_difference(tracts, water)
-  
-  }
-
-# TODO -- test on-demand caching
 state_list <- list()
 get_statecounty_tracts <- function(state, county, year=2017) {
   print("called get_statecounty_tracts")
@@ -255,6 +232,7 @@ get_acs_standard_columns <- function(year=2017) {
     acs_columns <- read.csv("ACMT/ACSColumns.csv")
   }
   acs_varnames <- acs_columns$acs_col
+  print(acs_varnames)
   names(acs_varnames) <- acs_columns$var_name
   acs_proportion_names <- paste(acs_columns$var_name[acs_columns$universe_col != ""], "proportion", sep="_")
   acs_count_names <- paste(acs_columns$var_name, "count", sep="_")
@@ -364,6 +342,8 @@ get_epa_walk_vars_for_lat_long <- function(long, lat, radius) {
   if (lat < 0 | lat > 90) { stop("Invalid latitude passed to get_epa_walk_vars_for_lat_long")}
   point_buffer <- get_point_buffer_for_lat_long(long, lat, radius)
   subset <- epa_walkability[point_buffer, ]
+  subset$fips <- substr(subset$GEOID10, 1, 11)
+  subset <- merge(subset, mrfei[,c("fips", "mrfei")], by="fips", all.x=T)
   if (nrow(subset) < 1) {
     message("get_epa_walk_vars_for_lat_long error: buffer does not overlap EPA walkability index")
   }
@@ -372,9 +352,10 @@ get_epa_walk_vars_for_lat_long <- function(long, lat, radius) {
   employment_type_mix <- st_interpolate_aw(subset["D2B_E8MIXA"], point_buffer, extensive=F)[[2]]
   intersection_density <- st_interpolate_aw(subset["D3b"], point_buffer, extensive=F)[[2]]
   commute_mode_mix <- st_interpolate_aw(subset["D4a"], point_buffer, extensive=F)[[2]]
-  names <- c("epa_walk", "epa_emp_hous", "epa_emp_type", "epa_intersection_density", "epa_commute_mode")
-  values <- c(walkability, employment_housing_mix, employment_type_mix, intersection_density, commute_mode_mix)
+  mrfei <- st_interpolate_aw(subset["mrfei"], point_buffer, extensive=F)[[2]]
+  names <- c("epa_walk", "epa_emp_hous", "epa_emp_type", "epa_intersection_density", "epa_commute_mode", "mrfei")
+  values <- c(walkability, employment_housing_mix, employment_type_mix, intersection_density, commute_mode_mix, mrfei)
   return(data.frame(names=names, values=values))
 }
 
-epa_walk_columnnames <- c("epa_walk", "epa_emp_hous", "epa_emp_type", "epa_intersection_density", "epa_commute_mode")
+epa_walk_columnnames <- c("epa_walk", "epa_emp_hous", "epa_emp_type", "epa_intersection_density", "epa_commute_mode", "mrfei")
